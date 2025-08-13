@@ -1,8 +1,8 @@
 # Wind Energy Game
 
-An interactive educational tool built with [Streamlit](https://streamlit.io/) to help users learn about wind energy production and variability using real-world data from Jeannette’s Pier in North Carolina.
+An interactive educational tool built with [Streamlit](https://streamlit.io/) to help users learn about wind energy production and variability using real-world data from Jennette’s Pier in North Carolina.
 
-![Project Logos](0bae86a4-9b80-45a9-96f1-1c0ad214c9a8.png)
+
 
 ---
 
@@ -28,11 +28,12 @@ The app is built in Python using **Streamlit**, with data visualization handled 
 
 ---
 📂 File Structure
+
 Wind_Energy_Game/
 │
-├── app.py                # Main Streamlit application
-├── requirements.txt      # Python dependencies
-├── README.md             # This file
+├── app.py                n
+├── requirements.txt      
+├── README.md             
 ├── Jen_Pier_Wind_Data_Energy.xlsx  # Data file (local or hosted)
 └── images/
     └── project_logos.png  # Project and funding logos
