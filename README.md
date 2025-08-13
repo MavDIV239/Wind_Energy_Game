@@ -29,14 +29,18 @@ The app is built in Python using **Streamlit**, with data visualization handled 
 ---
 📂 File Structure
 
+## File Structure
+
+```
 Wind_Energy_Game/
 │
-├── app.py                          # Main Streamlit application
-├── requirements.txt                 # Python dependencies
-├── README.md                        # Project documentation
-├── Jen_Pier_Wind_Data_Energy.xlsx   # Data file (local or hosted)
+├── app.py                       # Main Streamlit application
+├── requirements.txt              # Python dependencies
+├── README.md                     # Project documentation
+├── Jen_Pier_Wind_Data_Energy.xlsx # Data file (local or hosted)
 └── images/
-    └── project_logos.png            # Project and funding logos
+    └── project_logos.png         # Project and funding logos
+```
 
 ---
 📦 Requirements
