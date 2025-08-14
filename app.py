@@ -1,4 +1,4 @@
-# app.py — Wind Energy Game (kiosk-friendly; CO₂ in pounds; EV in miles)
+# app.py — Wind Energy Game (kiosk-friendly; CO₂ in lbs; EV in miles; kWh fixed)
 from typing import Dict
 import os
 import numpy as np
@@ -32,19 +32,18 @@ DEFAULTS = dict(
     ev_kwh_per_mile=0.27,   # kWh per mile (EV efficiency) -> miles = kWh / 0.27
     ebike_batt_kwh=0.5,     # e-bike full charge
     pizza_oven_kw=6.0,      # pizza oven draw (kW)
-    co2_lbs_per_kwh=0.88,   # CO₂ avoided per kWh, in lbs (≈ 0.4 kg/kWh)
+    co2_lbs_per_kwh=0.88,   # CO₂ avoided per kWh, in pounds (≈ 0.4 kg/kWh)
 )
 
-# “What you could power” catalog (kWh per unit)
-# qty = energy_kwh / kwh_per_unit
+# “What you could power” catalog (kWh per unit) — qty = energy_kwh / kwh_per_unit
 POWER_ITEMS = [
     # (key, nice_name, kwh_per_unit, unit_label, image_path, emoji_fallback)
-    ("pizza",  "Pizza oven hour",      6.0,     "hours",      "images/pizza_oven.png",  "🍕"),
-    ("ebike",  "E-bike full charge",   0.5,     "charges",    "images/ebike.png",       "🚲"),
-    ("console","Game console hour",    0.15,    "hours",      "images/game_console.png","🎮"),
-    ("ev",     "EV driving",           0.27,    "miles",      "images/ev.png",          "🚗"),
-    ("house",  "Average home (days)",  30.0,    "days",       "images/house.png",       "🏠"),
-    ("bulb",   "LED bulbs (10 hrs)",   0.1,     "bulbs×10h",  "images/lightbulb.png",   "💡"),
+    ("pizza",  "Pizza oven (hours)",    6.0,   "hours",      "images/pizza_oven.png",   "🍕"),
+    ("ebike",  "E-bike full charges",   0.5,   "charges",    "images/ebike.png",        "🚲"),
+    ("console","Game console (hours)",  0.15,  "hours",      "images/game_console.png", "🎮"),
+    ("ev",     "EV driving (miles)",    0.27,  "miles",      "images/ev.png",           "🚗"),
+    ("house",  "Average home (days)",   30.0,  "days",       "images/house.png",        "🏠"),
+    ("bulb",   "LED bulbs (10 hrs)",    0.10,  "bulbs×10h",  "images/lightbulb.png",    "💡"),
 ]
 
 DURATIONS = {"Day": 1, "Week": 7, "Month": 30}
@@ -79,6 +78,7 @@ def load_all_sheets(file) -> pd.DataFrame:
         if not keep:
             continue
         df = df[keep].copy()
+        # need wind + avg power to build power curve
         need = [col for col in ["wind_mph","avg_w"] if col in df.columns]
         if need:
             df = df.dropna(subset=need)
@@ -105,6 +105,7 @@ def build_interpolators(df: pd.DataFrame):
         return (lambda v: 0.0,)*4
 
     x = df["wind_mph"].to_numpy(float)
+    # ensure strictly increasing for np.interp
     for i in range(1, len(x)):
         if x[i] <= x[i-1]:
             x[i] = x[i-1] + 1e-6
@@ -128,30 +129,55 @@ def build_interpolators(df: pd.DataFrame):
     if "energy_kwh" in df.columns:
         f_energy = _interp("energy_kwh")
     else:
-        f_energy = lambda v_mph: 24.0 * (f_avg(v_mph) / 1000.0)  # fallback
+        # fallback daily energy = 24 * (avg W / 1000)
+        f_energy = lambda v_mph: 24.0 * (f_avg(v_mph) / 1000.0)
+
     return f_avg, f_min, f_max, f_energy
 
 # -----------------------------
 # Kiosk keypad (no physical keyboard needed)
 # -----------------------------
-def keypad_input(label: str, unit: str, *, min_val: float, max_val: float, default: float,
-                 step: float = 0.5, state_key: str = "wind_keypad"):
+def keypad_input(
+    label: str,
+    unit: str,
+    *,
+    min_val: float,
+    max_val: float,
+    default: float,
+    step: float = 0.5,
+    state_key: str = "wind_keypad",
+):
+    """
+    Touch-friendly keypad + presets + +/- nudges. Returns a float.
+    IMPORTANT: Stores its value in st.session_state[val_key] ONLY.
+               The visible field uses a different key and is read-only.
+    """
     import math
-    if state_key not in st.session_state:
-        st.session_state[state_key] = f"{default:.1f}"
 
-    def _set_text(txt): st.session_state[state_key] = txt
-    def _append(ch):
-        txt = st.session_state[state_key]
-        if ch == "." and "." in txt: return
-        if txt == "0" and ch != ".": txt = ch
-        else: txt += ch
-        _set_text(txt)
-    def _backspace():
-        txt = st.session_state[state_key]
-        _set_text(txt[:-1] if len(txt) > 1 else "0")
-    def _clear(): _set_text("0")
+    # Internal storage (NOT a widget key)
+    val_key = f"{state_key}_val"         # stores the editable text (string)
+    disp_key = f"{state_key}_display"    # read-only text_input key
 
+    # Initialize storage
+    if val_key not in st.session_state:
+        st.session_state[val_key] = f"{default:.1f}"
+
+    def get_txt() -> str:
+        return st.session_state.get(val_key, f"{default:.1f}")
+
+    def set_txt(txt: str):
+        st.session_state[val_key] = txt
+
+    def clamp_num(v: float) -> float:
+        try:
+            v = float(v)
+            if math.isnan(v) or math.isinf(v):
+                return default
+        except Exception:
+            return default
+        return min(max(v, min_val), max_val)
+
+    # Presets
     presets = [5, 12, 20, 30, 40, 50] if unit == "mph" else [2, 5, 9, 13, 18, 22]
 
     st.markdown(f"**{label}**")
@@ -159,46 +185,76 @@ def keypad_input(label: str, unit: str, *, min_val: float, max_val: float, defau
     for i, p in enumerate(presets):
         with ctop[i]:
             if st.button(f"{p:g} {unit}", key=f"preset_{unit}_{p}"):
-                _set_text(f"{p:g}")
+                set_txt(f"{p:g}")
 
+    # Display + +/- nudges (display is read-only so we don't fight Streamlit)
     row = st.columns([3, 1, 1])
     with row[0]:
-        st.text_input("Tap numbers or use presets", key=state_key, label_visibility="collapsed")
+        st.text_input(
+            "Tap numbers or use presets",
+            value=get_txt(),
+            key=disp_key,
+            disabled=True,
+            label_visibility="collapsed",
+        )
     with row[1]:
-        if st.button(f"+{step:g}"):
-            try: v = float(st.session_state[state_key]) + step
-            except: v = default
-            _set_text(f"{min(max(v, min_val), max_val):.1f}")
+        if st.button(f"+{step:g}", key=f"plus_{state_key}"):
+            try:
+                v = float(get_txt()) + step
+            except Exception:
+                v = default
+            set_txt(f"{clamp_num(v):.1f}")
     with row[2]:
-        if st.button(f"−{step:g}"):
-            try: v = float(st.session_state[state_key]) - step
-            except: v = default
-            _set_text(f"{min(max(v, min_val), max_val):.1f}")
+        if st.button(f"−{step:g}", key=f"minus_{state_key}"):
+            try:
+                v = float(get_txt()) - step
+            except Exception:
+                v = default
+            set_txt(f"{clamp_num(v):.1f}")
 
+    # Keypad grid
     r1 = st.columns(3); r2 = st.columns(3); r3 = st.columns(3); r4 = st.columns(3)
     for lbl, col in zip(("7","8","9"), r1):
-        if col.button(lbl): _append(lbl)
+        if col.button(lbl, key=f"{state_key}_b{lbl}"):
+            txt = get_txt()
+            if txt == "0": txt = ""
+            set_txt(txt + lbl)
     for lbl, col in zip(("4","5","6"), r2):
-        if col.button(lbl): _append(lbl)
+        if col.button(lbl, key=f"{state_key}_b{lbl}"):
+            txt = get_txt()
+            if txt == "0": txt = ""
+            set_txt(txt + lbl)
     for lbl, col in zip(("1","2","3"), r3):
-        if col.button(lbl): _append(lbl)
-    if r4[0].button("0"): _append("0")
-    if r4[1].button("."): _append(".")
-    if r4[2].button("⌫"): _backspace()
+        if col.button(lbl, key=f"{state_key}_b{lbl}"):
+            txt = get_txt()
+            if txt == "0": txt = ""
+            set_txt(txt + lbl)
+    if r4[0].button("0", key=f"{state_key}_b0"):
+        txt = get_txt()
+        if txt == "0": txt = ""
+        set_txt(txt + "0")
+    if r4[1].button(".", key=f"{state_key}_bdot"):
+        txt = get_txt()
+        if "." not in txt:
+            set_txt(txt + ".")
+    if r4[2].button("⌫", key=f"{state_key}_bdel"):
+        txt = get_txt()
+        set_txt(txt[:-1] if len(txt) > 1 else "0")
 
+    # Clear / Set
     b = st.columns(2)
-    if b[0].button("Clear"): _clear()
+    if b[0].button("Clear", key=f"{state_key}_clear"):
+        set_txt("0")
 
-    chosen = default
+    # Compute chosen numeric value (clamped), and normalize on Set
     try:
-        chosen = float(st.session_state[state_key])
-        if np.isnan(chosen) or np.isinf(chosen): chosen = default
-        chosen = min(max(chosen, min_val), max_val)
-    except:
+        chosen = clamp_num(float(get_txt()))
+    except Exception:
         chosen = default
 
-    if b[1].button(f"Set {unit.upper()}"):
-        _set_text(f"{chosen:.1f}")
+    if b[1].button(f"Set {unit.upper()}", key=f"{state_key}_set"):
+        set_txt(f"{chosen:.1f}")
+
     return chosen
 
 # -----------------------------
@@ -284,7 +340,7 @@ cfg = dict(home_kwh_per_day=home_kwh_per_day, ev_kwh_per_mile=ev_kwh_per_mile,
 # Main UI
 # -----------------------------
 st.title("💨 Wind Energy Game")
-st.caption("Tap a wind speed — see instant power, data-driven energy, and what you could power!")
+st.caption("Tap a wind speed — see instant power, data-driven energy (kWh), and what you could power!")
 
 # Data (upload or demo)
 if uploaded is not None:
@@ -295,7 +351,7 @@ else:
         "avg_w":   [50, 200, 600, 1500, 3000, 4500],
         "min_w":   [0, 0,  50,  100,  200,  300],
         "max_w":   [200, 800, 2000, 5000, 9000, 11000],
-        "energy_kwh": [2, 6, 14, 28, 55, 85],
+        "energy_kwh": [2, 6, 14, 28, 55, 85],  # demo daily kWh so the app runs without a file
     })
 
 f_avg, f_min, f_max, f_energy = build_interpolators(df)
@@ -322,11 +378,11 @@ p_max_w = max(0.0, f_max(wind_mph))
 p_avg_kw = p_avg_w / 1000.0
 energy_day_kwh = max(0.0, f_energy(wind_mph))  # daily kWh from data (or fallback)
 
-# Speedometer
+# Speedometer (kW) + caption with W values
 st.plotly_chart(gauge(p_avg_kw, rated_kw), use_container_width=True)
 st.caption(f"Instant power at **{speed_label}** — Min: {p_min_w:.0f} W · Avg: {p_avg_w:.0f} W · Max: {p_max_w:.0f} W")
 
-# Tabs for Day / Week / Month
+# Tabs for Day / Week / Month — all in kWh, CO₂ in lbs
 tabs = st.tabs(list(DURATIONS.keys()))
 for tab_name, tab in zip(DURATIONS.keys(), tabs):
     with tab:
@@ -336,7 +392,7 @@ for tab_name, tab in zip(DURATIONS.keys(), tabs):
 
         cA, cB, cC = st.columns([1, 1, 1])
         with cA:
-            st.plotly_chart(odometer(energy_kwh, title=f"Energy ({tab_name})"), use_container_width=True)
+            st.plotly_chart(odometer(energy_kwh, title=f"Energy ({tab_name}) — kWh"), use_container_width=True)
         with cB:
             st.plotly_chart(co2_bubbles(co2_lbs), use_container_width=True)
             st.caption(f"**CO₂ avoided** ≈ {co2_lbs:,.1f} lbs")
