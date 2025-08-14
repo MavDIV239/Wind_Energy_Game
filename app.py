@@ -1,4 +1,4 @@
-# app.py — Wind Energy Game (kiosk-friendly; CO₂ in lbs; EV in miles; kWh fixed)
+# app.py — Wind Energy Game (Output Power in W; Energy in kWh; CO₂ in lbs; EV in miles)
 from typing import Dict
 import os
 import numpy as np
@@ -27,7 +27,7 @@ footer {visibility: hidden;}
 # Defaults / factors (editable by staff)
 # -----------------------------
 DEFAULTS = dict(
-    rated_kw=10.0,          # sets gauge max (visual only)
+    rated_kw=10.0,          # sets gauge max (visual only) — in kW; gauge converts to W
     home_kwh_per_day=30.0,  # avg US home usage
     ev_kwh_per_mile=0.27,   # kWh per mile (EV efficiency) -> miles = kWh / 0.27
     ebike_batt_kwh=0.5,     # e-bike full charge
@@ -135,7 +135,7 @@ def build_interpolators(df: pd.DataFrame):
     return f_avg, f_min, f_max, f_energy
 
 # -----------------------------
-# Kiosk keypad (no physical keyboard needed)
+# Kiosk keypad (fixed to avoid session_state conflicts)
 # -----------------------------
 def keypad_input(
     label: str,
@@ -260,21 +260,26 @@ def keypad_input(
 # -----------------------------
 # Visual components (Plotly)
 # -----------------------------
-def gauge(power_kw: float, rated_kw: float) -> go.Figure:
-    max_kw = max(rated_kw, power_kw * 1.25, 0.5)
+def power_gauge_watts(power_w: float, rated_kw: float) -> go.Figure:
+    """
+    Output Power gauge in W (watts). Axis max is based on rated_kw (converted to W)
+    and current value with headroom.
+    """
+    rated_w = max(0.0, rated_kw) * 1000.0
+    max_w = max(rated_w, power_w * 1.25, 50.0)
     fig = go.Figure(go.Indicator(
         mode="gauge+number+delta",
-        value=power_kw,
-        number={"valueformat": ",.2f", "font": {"size": 42}},
-        title={"text": "Instant Power (kW)", "font": {"size": 20}},
-        delta={"reference": max_kw/2, "increasing": {"color": "#16a34a"}},
+        value=power_w,
+        number={"valueformat": ",.0f", "font": {"size": 42}, "suffix": " W"},
+        title={"text": "Output Power (W)", "font": {"size": 20}},
+        delta={"reference": max_w/2, "increasing": {"color": "#16a34a"}},
         gauge={
-            "axis": {"range": [0, max_kw]},
+            "axis": {"range": [0, max_w]},
             "bar": {"thickness": 0.25},
             "steps": [
-                {"range": [0, max_kw*0.33], "color": "#d1fae5"},
-                {"range": [max_kw*0.33, max_kw*0.66], "color": "#a7f3d0"},
-                {"range": [max_kw*0.66, max_kw], "color": "#6ee7b7"},
+                {"range": [0, max_w*0.33], "color": "#d1fae5"},
+                {"range": [max_w*0.33, max_w*0.66], "color": "#a7f3d0"},
+                {"range": [max_w*0.66, max_w], "color": "#6ee7b7"},
             ],
         },
     ))
@@ -340,7 +345,7 @@ cfg = dict(home_kwh_per_day=home_kwh_per_day, ev_kwh_per_mile=ev_kwh_per_mile,
 # Main UI
 # -----------------------------
 st.title("💨 Wind Energy Game")
-st.caption("Tap a wind speed — see instant power, data-driven energy (kWh), and what you could power!")
+st.caption("Tap a wind speed — see **Output Power (W)**, data-driven energy (kWh), and what you could power!")
 
 # Data (upload or demo)
 if uploaded is not None:
@@ -375,12 +380,11 @@ with c2:
 p_avg_w = max(0.0, f_avg(wind_mph))
 p_min_w = max(0.0, f_min(wind_mph))
 p_max_w = max(0.0, f_max(wind_mph))
-p_avg_kw = p_avg_w / 1000.0
 energy_day_kwh = max(0.0, f_energy(wind_mph))  # daily kWh from data (or fallback)
 
-# Speedometer (kW) + caption with W values
-st.plotly_chart(gauge(p_avg_kw, rated_kw), use_container_width=True)
-st.caption(f"Instant power at **{speed_label}** — Min: {p_min_w:.0f} W · Avg: {p_avg_w:.0f} W · Max: {p_max_w:.0f} W")
+# Output Power gauge (W) + caption
+st.plotly_chart(power_gauge_watts(p_avg_w, rated_kw), use_container_width=True)
+st.caption(f"**Output power** at {speed_label} — Min: {p_min_w:.0f} W · Avg: {p_avg_w:.0f} W · Max: {p_max_w:.0f} W")
 
 # Tabs for Day / Week / Month — all in kWh, CO₂ in lbs
 tabs = st.tabs(list(DURATIONS.keys()))
@@ -405,5 +409,6 @@ for tab_name, tab in zip(DURATIONS.keys(), tabs):
         item_cards(energy_kwh)
 
 # Celebration
-if p_avg_kw >= max(1.0, rated_kw * 0.5):
+if p_avg_w >= (DEFAULTS["rated_kw"] * 1000) * 0.5:
     st.balloons()
+
